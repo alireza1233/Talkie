@@ -1,4 +1,4 @@
-name: Download, split into 1.8GB parts, and upload to Release
+name: Download, split into 1.8GB parts (exact bytes), and upload to Release
 
 on:
   workflow_dispatch:
@@ -7,11 +7,11 @@ on:
         description: 'لینک مستقیم فایل بزرگ (مثلاً از Release)'
         required: true
       release_tag:
-        description: 'برچسب Release (مثلاً v1.0.0) - خالی بذارید خودکار میشه'
+        description: 'برچسب Release (خالی بذارید خودکار)'
         required: false
         default: ''
       part_prefix:
-        description: 'پیشوند نام قطعات (بدون پسوند، مثلاً myfile)'
+        description: 'پیشوند قطعات'
         required: false
         default: 'downloaded-part'
 
@@ -19,7 +19,7 @@ jobs:
   download-split-upload-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # برای ایجاد Release و آپلود asset
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,11 +31,11 @@ jobs:
           echo "Downloading from ${{ github.event.inputs.file_url }}"
           curl -L -o original_file "${{ github.event.inputs.file_url }}"
 
-      - name: Split into 1.8GB parts
+      - name: Split into 1.8GB parts (raw bytes)
         run: |
           mkdir -p split_parts
-          # هر قطعه 1.8 گیگابایت (حدود 1843 مگابایت - دقیقاً 1.8 * 1024 = 1843.2)
-          split -b 1.8G -d -a 3 original_file "split_parts/${{ github.event.inputs.part_prefix }}."
+          # 1.8 GiB = 1932735283 bytes (زیر 2 GiB حد مجاز)
+          split -b 1932735283 -d -a 3 original_file "split_parts/${{ github.event.inputs.part_prefix }}."
           echo "Split completed. Parts:"
           ls -lh split_parts/
 
@@ -48,13 +48,12 @@ jobs:
             TAG="${{ github.event.inputs.release_tag }}"
           fi
           echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "Using release tag: $TAG"
 
       - name: Create GitHub Release
         run: |
           gh release create "${{ steps.get_tag.outputs.tag }}" \
             --title "Split parts of ${{ github.event.inputs.part_prefix }}" \
-            --notes "Auto-generated from workflow. Original file: ${{ github.event.inputs.file_url }}" \
+            --notes "Original: ${{ github.event.inputs.file_url }}" \
             --draft=false \
             --latest=true
         env:
@@ -64,14 +63,11 @@ jobs:
         run: |
           parts=($(ls split_parts/${{ github.event.inputs.part_prefix }}.* | sort))
           total=${#parts[@]}
-          echo "Total parts to upload: $total"
-          
+          echo "Total parts: $total"
           for part in "${parts[@]}"; do
-            filename=$(basename "$part")
-            echo "Uploading $filename ..."
+            echo "Uploading $(basename "$part") ..."
             gh release upload "${{ steps.get_tag.outputs.tag }}" "$part" --clobber
           done
-          echo "All parts uploaded successfully."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -79,4 +75,3 @@ jobs:
         run: |
           rm -f original_file
           rm -rf split_parts
-          echo "Temporary files removed."
